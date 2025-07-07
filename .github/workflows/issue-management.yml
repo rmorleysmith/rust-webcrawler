@@ -40,6 +40,9 @@ jobs:
               "seo-spider": ${{ vars.SEO_SPIDER_ID }},
               "log-file-analyser": ${{ vars.LOG_FILE_ANALYSER_ID }}
             };
+
+            console.log(projectsMap["seo-spider"])
+            console.log(projectsMap["log-file-analyser"])
             
             for (const key in projectsMap) {
               if (labels.includes(key)) {
