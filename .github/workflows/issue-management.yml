@@ -1,0 +1,116 @@
+name: Issue Management
+
+on:
+  issues:
+    types:
+      - opened
+      - reopened
+
+jobs:
+  manage:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_SECRET_TOKEN }}
+          script: |
+            const issue = context.payload.issue;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            
+            if (context.payload.action === 'reopened') {
+              await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: issue.number,
+                milestone: null
+              });
+              console.log('Cleared milestone for reopened issue.');
+              return;
+            }
+            
+            const labels = issue.labels.map(label => label.name.toLowerCase());
+            
+            // Move to project according to label
+            const projectsMap = {
+              "seo-spider": ${{ vars.SEO_SPIDER_ID }},
+              "log-file-analyser": ${{ vars.LOG_FILE_ANALYSER_ID }}
+            };
+            
+            for (const key in projectsMap) {
+              if (labels.includes(key)) {
+                await github.graphql(`
+                  mutation($projectId:ID!, $contentId:ID!) {
+                    addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
+                      item {
+                        id
+                      }
+                    }
+                  }
+                `, {
+                  projectId: projectsMap[key],
+                  contentId: issue.node_id
+                });
+              }
+            }
+
+            return;
+            
+            // Set type field from label if not already set
+            const typeFieldId = "TYPE_FIELD_ID"; // Replace with actual field ID
+            const typeOptions = {
+              "type:bug": "BUG_OPTION_ID",
+              "type:feature": "FEATURE_OPTION_ID",
+              "housekeeping": "TASK_OPTION_ID"
+            };
+            
+             for (const key in typeOptions) {
+               if (labels.includes(key)) {
+                 const projectId = Object.values(projectsMap).find(id => true); // pick any, assume already added
+                 const items = await github.graphql(`
+                   query($projectId: ID!, $contentId: ID!) {
+                     node(id: $projectId) {
+                       ... on ProjectV2 {
+                         items(first: 50, filters: {contentId: $contentId}) {
+                           nodes {
+                             id
+                           }
+                         }
+                       }
+                     }
+                   }
+                 `, {
+                   projectId: projectId,
+                   contentId: issue.node_id
+                 });
+            
+                 const itemId = items.node.items.nodes[0]?.id;
+                 if (itemId) {
+                   await github.graphql(`
+                     mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                       updateProjectV2ItemFieldValue(input: {
+                         projectId: $projectId,
+                         itemId: $itemId,
+                         fieldId: $fieldId,
+                         value: {
+                           singleSelectOptionId: $optionId
+                         }
+                       }) {
+                         projectV2Item {
+                           id
+                         }
+                       }
+                     }
+                   `, {
+                     projectId: projectId,
+                     itemId: itemId,
+                     fieldId: typeFieldId,
+                     optionId: typeOptions[key]
+                   });
+                 }
+               }
+            }
